@@ -1,0 +1,36 @@
+name: uptime sneco.ua
+# Зовнішній монітор sneco.ua: спрацьовує, коли сервер мертвий і сам нічого не надішле, і ловить те, чого з сервера
+# не видно (Cloudflare, індексація, шлях покупця, валюта EU-вітрин, регресії безпеки). Серверні алерти: /usr/local/sbin/sneco_alerts.sh.
+# Публічний репозиторій: хвилини Actions безкоштовні. Секрети: TG_TOKEN, TG_CHAT. У лог нічого секретного не друкується.
+# Антиспам: однаковий збій повідомляється раз на 60 хв; коли все зелене після збою — «✅ відновлено».
+on:
+  schedule: [{ cron: '7,22,37,52 * * * *' }]
+  workflow_dispatch:
+concurrency: { group: uptime, cancel-in-progress: true }
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: restore state
+        uses: actions/cache/restore@v4
+        with: { path: state, key: 'state-${{ github.run_id }}', restore-keys: 'state-' }
+      - name: probe
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT: ${{ secrets.TG_CHAT }}
+        run: bash probe.sh
+      - name: save state
+        if: always()
+        uses: actions/cache/save@v4
+        with: { path: state, key: 'state-${{ github.run_id }}' }
+      - name: keepalive (GitHub вимикає розклад після 60 днів без комітів)
+        if: github.event_name == 'schedule'
+        run: |
+          if [ "$(date -u +%d%H)" = "0103" ] && [ "$(date -u +%M)" -lt 15 ]; then
+            git config user.name uptime-bot; git config user.email uptime-bot@users.noreply.github.com
+            date -u +%F > last-run.txt; git add last-run.txt; git commit -m "keepalive $(date -u +%F)" && git push
+          fi
