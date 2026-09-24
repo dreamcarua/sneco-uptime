@@ -23,7 +23,7 @@ chk $B/ 'snEco'
 chk $B/shop/ 'add_to_cart_button'
 chk $B/shop/gauda/ 'single_add_to_cart_button'
 chk $B/en/ 'snEco'
-chk $B/pl/shop/ '€'
+chk $B/pl/shop/ 'woocommerce-Price-amount'
 chk $B/ 'snEco' "$GB"
 chk $B/sitemap_index.xml 'sitemap'
 chk $B/llms.txt 'snEco'
@@ -58,7 +58,7 @@ co=$(curl -sS -L -A "$UA" -c $J -b $J --compressed --max-time 40 -w '\n__%{http_
 if [ "${co##*__}" != 200 ] || ! grep -q 'billing_' <<<"$co"; then add "Сторінка оформлення замовлення: HTTP ${co##*__} або без форми"; fi
 rm -f $J
 # 5) EU-вітрини показують ціни в євро і на телефоні (кеш «отруювався» гривнями)
-for u in /en/shop/ /de/shop/; do
+for u in /en/shop/ /de/shop/ /pl/shop/; do
   p=$(curl -sS -L -A "$MUA" --compressed --max-time 30 "$B$u" || true)
   ne=$(grep -o '€\|&euro;' <<<"$p" | wc -l); nu=$(grep -o '&#8372;\|₴\|грн' <<<"$p" | wc -l)
   [ "$ne" -ge 3 ] && [ "$nu" -eq 0 ] || add "$u (телефон): цін у € ${ne}, у гривнях ${nu} — валюта EU-вітрини зламалась"
