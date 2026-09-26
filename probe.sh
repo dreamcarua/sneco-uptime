@@ -44,7 +44,10 @@ grep -qiE '<meta[^>]+name="robots"[^>]+noindex' <<<"$home" && add "На голо
 grep -qi 'rel="canonical"' <<<"$home" || add "На головній зник canonical"
 grep -q 'GTM-PD4PGXZB' <<<"$home" || add "На головній немає GTM-PD4PGXZB (аналітика і реклама не рахують)"
 css=0
-for c in $(grep -oE 'wp-content/cache/min/[^"]+\.css' <<<"$home" | sort -u | head -3); do
+# 26.09.2026: головна віддає стилі не лише з Rocket (cache/min), а й з очищеного бандла
+# (uploads/sneco-purged-css) і зібраного Elementor-бандла (uploads/elementor/css/sneco-home-*).
+# Раніше шукали тільки cache/min → після purge кешу хибна тривога «0 Б».
+for c in $(grep -oE 'wp-content/(cache/min|uploads/sneco-purged-css|uploads/elementor/css)/[^"?'"'"']+\.css' <<<"$home" | sort -u | head -5); do
   sz=$(curl -sS -A "$UA" -H 'Accept-Encoding: identity' --max-time 30 -o /dev/null -w '%{size_download}' "$B/$c" || echo 0)
   [ "${sz:-0}" -gt "$css" ] && css=$sz
 done
