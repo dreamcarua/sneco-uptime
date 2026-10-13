@@ -59,6 +59,19 @@ cart=$(curl -sS -L -A "$UA" -c $J -b $J --compressed --max-time 30 $B/cart/ || t
 if ! grep -q 'Гауда' <<<"$cart" || ! grep -q 'cart_item' <<<"$cart"; then add "Кошик не показує доданий товар (додавання в кошик зламане?)"; fi
 co=$(curl -sS -L -A "$UA" -c $J -b $J --compressed --max-time 40 -w '\n__%{http_code}' $B/checkout/ || true)
 if [ "${co##*__}" != 200 ] || ! grep -q 'billing_' <<<"$co"; then add "Сторінка оформлення замовлення: HTTP ${co##*__} або без форми"; fi
+# 4б) кнопка «Оформити» (13.10.2026, сісадмін-директор): POST на обробник оформлення з тим самим кошиком,
+#     навмисно без даних покупця і з неіснуючим способом оплати. Чекаємо JSON «failure» з повідомленнями валідації:
+#     це доводить сесію, ключ форми, обробник і шлях через Cloudflare. Замовлення так створитись не може
+#     (перевірено 13.10.2026: MAX(id) замовлень до і після однаковий).
+nonce=$(grep -oE 'name="woocommerce-process-checkout-nonce" value="[0-9a-f]+"' <<<"$co" | grep -oE '[0-9a-f]{6,}' | head -1)
+if [ -z "$nonce" ]; then add "Оформлення: на сторінці немає ключа форми (nonce), кнопка «Оформити» не спрацює"
+else
+  pr=$(curl -sS -A "$UA" -c $J -b $J --compressed --max-time 40 -X POST "$B/?wc-ajax=checkout" \
+     --data-urlencode "woocommerce-process-checkout-nonce=$nonce" --data-urlencode "_wp_http_referer=/checkout/" \
+     --data-urlencode "payment_method=sneco-uptime-probe-none" || true)
+  if grep -q '"result":"success"' <<<"$pr"; then add "Оформлення: тестова відправка БЕЗ даних покупця пройшла. Перевірити валідацію і нові замовлення!"
+  elif ! grep -q '"result":"failure"' <<<"$pr" || ! grep -q 'woocommerce-error' <<<"$pr"; then add "Кнопка «Оформити»: обробник відповів не помилкою валідації: ${pr:0:120}"; fi
+fi
 rm -f $J
 # 5) EU-вітрини показують ціни в євро і на телефоні (кеш «отруювався» гривнями)
 for u in /en/shop/ /de/shop/ /pl/shop/; do
