@@ -6,12 +6,25 @@ MUA='Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15
 GB='Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
 B=https://sneco.ua
 fail=''
+# 28.10.2026: GitHub US-раннер іноді не дочікується sneco.ua за 30 с (з Європи 0,3 с): 3 failure + 11 cancelled з 14.10.
+# Кожен curl у цьому скрипті при таймауті (код 28) повторюється один раз з --max-time 60; якщо й тоді таймаут,
+# адреса пишеться в $TMO. Запуск з таймаутами = «повільно з US-раннера», окремо від справжніх поломок (див. кінець файла).
+TMO=$(mktemp)
+curl(){
+  local o r
+  o=$(command curl "$@"); r=$?
+  if [ $r = 28 ]; then
+    o=$(command curl "$@" --max-time 60); r=$?
+    [ $r = 28 ] && { printf '%s\n' "$@" | grep -m1 -E '^https?://' >> "$TMO"; }
+  fi
+  printf '%s' "$o"; return $r
+}
 add(){ fail="$fail
 ❌ $*"; }
 chk(){  # url, маркер, [UA]
   local code=000 out
   for t in 1 2; do
-    out=$(curl -sS -L --max-redirs 3 -A "${3:-$UA}" --compressed --max-time 30 -w '\n__%{http_code}' "$1" 2>&1 || true)
+    out=$(curl -sS -L --max-redirs 3 -A "${3:-$UA}" --compressed --max-time 30 -w '\n__%{http_code}' "$1" 2>/dev/null || true)
     code=${out##*__}
     if [ "$code" = 200 ] && grep -qF -- "$2" <<<"$out"; then return 0; fi
     sleep 20
@@ -31,11 +44,13 @@ chk https://brand.sneco.ua/ 'snEco'
 # 2) швидкість (TTFB головної, дві спроби)
 slow=1; s=99
 for t in 1 2; do
-  s=$(curl -sS -o /dev/null -A "$UA" --max-time 30 -w '%{time_starttransfer}' $B/ || echo 99)
+  s=$(command curl -sS -o /dev/null -A "$UA" --max-time 30 -w '%{time_starttransfer}' $B/ 2>/dev/null) || s=99
   if awk -v s="$s" 'BEGIN{exit !(s<4)}'; then slow=0; break; fi
   sleep 10
 done
-[ $slow = 1 ] && add "Головна відповідає повільно: TTFB ${s} с (> 4 с)"
+if [ $slow = 1 ]; then
+  if [ "$s" = 99 ]; then echo "$B/ (TTFB, 2 × таймаут 30 с)" >> "$TMO"; else add "Головна відповідає повільно: TTFB ${s} с (> 4 с)"; fi
+fi
 # 3) індексація й аналітика
 rb=$(curl -sS --max-time 20 $B/robots.txt || true)
 if awk 'BEGIN{ua=0;f=0} /^User-agent:[ \t]*\*/{ua=1;next} /^User-agent:/{ua=0} ua && /^Disallow:[ \t]*\/[ \t]*$/{f=1} END{exit !f}' <<<"$rb"; then add "robots.txt закриває весь сайт (Disallow: /)"; fi
@@ -102,13 +117,41 @@ ad=$(curl -sS -o /dev/null -A "$UA" --max-time 30 -w '%{http_code}' $B/wp-admin/
 case "$ad" in 5*|000) add "Адмінка /wp-admin/ → HTTP $ad";; esac
 
 # ---- повідомлення (антиспам через state/ з кешу Actions) ----
+# 28.10.2026: state/ може не прийти з кешу Actions (перший запуск, кеш виселено): mkdir -p і читання лише наявного файла
+# (було: «probe.sh: line 109: state/last: No such file or directory»).
 mkdir -p state; now=$(date +%s)
-tg(){ [ -n "${TG_TOKEN:-}" ] && curl -sS -o /dev/null --data-urlencode "chat_id=$TG_CHAT" --data-urlencode "text=$1" \
-      --data-urlencode "disable_web_page_preview=true" "https://api.telegram.org/bot${TG_TOKEN}/sendMessage"; }
-if [ -n "$fail" ]; then
-  h=$(printf '%s' "$fail" | sha1sum | cut -c1-12); read -r ph pt < state/last 2>/dev/null || { ph=''; pt=0; }
-  if [ "$h" != "$ph" ] || [ $((now - pt)) -ge 3600 ]; then tg "🔴 [sneco uptime]$fail"; echo "$h $now" > state/last; fi
-  printf 'FAILED:%s\n' "$fail"; exit 1
+slowl=$(sort -u "$TMO" | sed 's/^/🐢 /'); rm -f "$TMO"
+if [ -n "$slowl" ]; then
+  n=0; [ -f state/slow ] && read -r n < state/slow; n=$((n + 1)); echo "$n" > state/slow
+  echo "::warning::slow from US runner (run ${n} in a row): $(printf '%s' "$slowl" | tr '\n' ' ')"
+else
+  rm -f state/slow; n=0
 fi
+tg(){ [ -n "${TG_TOKEN:-}" ] && command curl -sS -o /dev/null --data-urlencode "chat_id=$TG_CHAT" --data-urlencode "text=$1" \
+      --data-urlencode "disable_web_page_preview=true" "https://api.telegram.org/bot${TG_TOKEN}/sendMessage"; }
+# Справжні збої без таймаутів: тривога одразу, як і раніше.
+# Збої разом із таймаутами US-раннера: перший такий запуск лише попередження (могли впасти через таймаут);
+# другий поспіль (~30 хв) уже тривога. Лише таймаути без інших збоїв: тривога з 3-го запуску поспіль (~45 хв).
+if [ -n "$fail" ] && { [ -z "$slowl" ] || [ "$n" -ge 2 ]; }; then
+  h=$(printf '%s' "$fail" | sha1sum | cut -c1-12); ph=''; pt=0
+  [ -f state/last ] && read -r ph pt < state/last
+  extra=''; [ -n "$slowl" ] && extra="
+
+Таймаути з US-раннера GitHub (${n} запуски поспіль):
+$slowl"
+  if [ "$h" != "$ph" ] || [ $((now - pt)) -ge 3600 ]; then tg "🔴 [sneco uptime]$fail$extra"; echo "$h $now" > state/last; fi
+  printf 'FAILED:%s\n' "$fail"; [ -n "$slowl" ] && printf 'SLOW (US runner):\n%s\n' "$slowl"; exit 1
+fi
+if [ -n "$slowl" ]; then
+  if [ -z "$fail" ] && [ "$n" -ge 3 ]; then
+    sp=0; [ -f state/slowtg ] && read -r sp < state/slowtg
+    if [ $((now - sp)) -ge 3600 ]; then tg "🟡 [sneco uptime] ${n} запуски поспіль таймаути з US-раннера GitHub (перевірити з Європи):
+$slowl"; echo "$now" > state/slowtg; fi
+  fi
+  printf 'SLOW from US runner (run %s), not counted as breakage:\n%s\n' "$n" "$slowl"
+  [ -n "$fail" ] && printf 'possibly caused by the timeouts (alert if repeated next run):%s\n' "$fail"
+  exit 0
+fi
+rm -f state/slowtg
 if [ -s state/last ]; then tg "✅ [sneco uptime] усі зовнішні перевірки знову зелені"; rm -f state/last; fi
 echo "all green (TTFB ${s}s, CSS ${css} B, feed ${fs#* } B, pulse ${ag:-?} min, cert ${days:-?} d)"
