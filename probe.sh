@@ -98,7 +98,8 @@ done
 fs=$(curl -sS -o /dev/null -A "$UA" -H 'Accept-Encoding: identity' --max-time 60 -w '%{http_code} %{size_download}' $B/facebook-feed.xml || echo '000 0')
 [ "${fs% *}" = 200 ] && [ "${fs#* }" -gt 50000 ] || add "Фід Meta /facebook-feed.xml: HTTP ${fs% *}, ${fs#* } Б (реклама каталогу під загрозою)"
 # 7) пульс сервера: серверні алерти (cron кожні 5 хв) живі
-al=$(curl -sS -A "$UA" --max-time 20 "$B/sneco-alive.txt?t=$(date +%s)" | tr -dc '0-9')
+# 17.11.2026: разовий TLS-обрив (curl 35) дав хибну тривогу → до 3 спроб
+al=""; for i in 1 2 3; do al=$(curl -sS -A "$UA" --max-time 20 "$B/sneco-alive.txt?t=$(date +%s)" | tr -dc '0-9'); [ -n "$al" ] && break; sleep 10; done
 if [ -n "$al" ]; then ag=$(( ($(date +%s) - al) / 60 )); [ "$ag" -gt 20 ] && add "Серверні алерти мовчать ${ag} хв (cron або сервер не працює)"
 else add "Немає пульсу серверних алертів (sneco-alive.txt)"; fi
 # 8) безпека: службові файли закриті, захист вебхука МойСклад працює
