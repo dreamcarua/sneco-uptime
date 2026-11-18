@@ -22,6 +22,7 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT: ${{ secrets.TG_CHAT }}
+          AUTOFIX_TOKEN: ${{ secrets.AUTOFIX_TOKEN }}
         run: bash probe.sh
       - name: save state
         if: always()

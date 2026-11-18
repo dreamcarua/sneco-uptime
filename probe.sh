@@ -130,6 +130,11 @@ else
 fi
 tg(){ [ -n "${TG_TOKEN:-}" ] && command curl -sS -o /dev/null --data-urlencode "chat_id=$TG_CHAT" --data-urlencode "text=$1" \
       --data-urlencode "disable_web_page_preview=true" "https://api.telegram.org/bot${TG_TOKEN}/sendMessage"; }
+# failure -> auto-repair pipeline (owner-dm edge, 24h dedup there; 18.11.2026). Never fails the job; failures only, never ✅ recovery.
+af(){ [ -n "${AUTOFIX_TOKEN:-}" ] || return 0
+  _p=$(jq -cn --arg a "$1" --arg p sneco '{alert:$a,project:$p}' 2>/dev/null) || return 0
+  command curl -s -m 20 -o /dev/null -X POST "https://wotghlaehnvxyeacznvv.supabase.co/functions/v1/owner-dm" \
+    -H "x-autofix-token: $AUTOFIX_TOKEN" -H "content-type: application/json" --data "$_p" || true; return 0; }
 # Справжні збої без таймаутів: тривога одразу, як і раніше.
 # Збої разом із таймаутами US-раннера: перший такий запуск лише попередження (могли впасти через таймаут);
 # другий поспіль (~30 хв) уже тривога. Лише таймаути без інших збоїв: тривога з 3-го запуску поспіль (~45 хв).
@@ -140,14 +145,14 @@ if [ -n "$fail" ] && { [ -z "$slowl" ] || [ "$n" -ge 2 ]; }; then
 
 Таймаути з US-раннера GitHub (${n} запуски поспіль):
 $slowl"
-  if [ "$h" != "$ph" ] || [ $((now - pt)) -ge 3600 ]; then tg "🔴 [sneco uptime]$fail$extra"; echo "$h $now" > state/last; fi
+  if [ "$h" != "$ph" ] || [ $((now - pt)) -ge 3600 ]; then tg "🔴 [sneco uptime]$fail$extra"; af "[sneco uptime]$fail$extra"; echo "$h $now" > state/last; fi
   printf 'FAILED:%s\n' "$fail"; [ -n "$slowl" ] && printf 'SLOW (US runner):\n%s\n' "$slowl"; exit 1
 fi
 if [ -n "$slowl" ]; then
   if [ -z "$fail" ] && [ "$n" -ge 3 ]; then
     sp=0; [ -f state/slowtg ] && read -r sp < state/slowtg
     if [ $((now - sp)) -ge 3600 ]; then tg "🟡 [sneco uptime] ${n} запуски поспіль таймаути з US-раннера GitHub (перевірити з Європи):
-$slowl"; echo "$now" > state/slowtg; fi
+$slowl"; af "[sneco uptime] ${n} запуски поспіль таймаути з US-раннера GitHub: $slowl"; echo "$now" > state/slowtg; fi
   fi
   printf 'SLOW from US runner (run %s), not counted as breakage:\n%s\n' "$n" "$slowl"
   [ -n "$fail" ] && printf 'possibly caused by the timeouts (alert if repeated next run):%s\n' "$fail"
